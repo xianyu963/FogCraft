@@ -1,0 +1,56 @@
+# FogCraft 数据自动更新工作流
+# 定时：每月 1 号 00:00 UTC（北京时间 08:00）
+# 手动：仓库 Actions 页面 → "Auto Update Data" → Run workflow
+#
+# 流程：检出 → 运行 update-data.js →
+#   - 退出码 0（有更新）：自动提交 items_zh.txt / item/ / index.html / data/clues.json / .last-update 并推送
+#   - 退出码 1（无新物品）：静默结束
+name: Auto Update Data
+
+on:
+  schedule:
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  auto-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 安装依赖（如有 package.json）
+        run: |
+          if [ -f package.json ]; then npm install; fi
+
+      - name: 运行数据更新脚本
+        id: update
+        run: |
+          set +e
+          node update-data.js
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: 提交并推送变更
+        if: steps.update.outputs.exit_code == '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "ℹ 脚本报告有更新，但工作区无文件变化（可能已被手动同步），跳过提交"
+          else
+            git commit -m "chore(data): 自动同步 Minecraft 新物品"
+            git push
+            echo "✅ 已推送更新到仓库"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

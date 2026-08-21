@@ -1,0 +1,12 @@
+# FogCraft · Cloudflare Pages 缓存策略（防御性上线）
+# 物品图标（1488 张 PNG）首次访问后永久缓存于浏览器与 CDN 边缘，杜绝重复回源
+# 语法参考：https://developers.cloudflare.com/pages/configuration/headers/
+
+/*.png
+  Cache-Control: public, max-age=31536000, immutable
+
+/*.js
+  Cache-Control: public, max-age=86400
+
+/*.css
+  Cache-Control: public, max-age=86400
