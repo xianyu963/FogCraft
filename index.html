@@ -626,6 +626,7 @@ footer{font-size:12px;color:var(--text-dim);text-align:center;padding-bottom:14p
            placeholder="输入物品中文名或英文 ID，如：钻石剑 / diamond_sword"
            autocomplete="off" spellcheck="false">
     <button id="submit-btn" class="mc-btn">🔥 提交</button>
+    <div id="wordle-word-hint" class="wordle-attempts hidden">📝 共 0 个字，有 0 次尝试机会</div>
   </section>
 
   <!-- 线索区（6 条占位） -->
@@ -1529,6 +1530,9 @@ function compareGuess(guess, target){
 // 随机抽取新目标并重置状态（切换模式 / 换一题共用）
 function startWordleGame(){
   wordleState.target = ITEMS[Math.floor(Math.random() * ITEMS.length)].name;
+  // 尝试次数随目标字数动态调整：1~2字 6次 / 3~4字 8次 / 5字及以上 10次
+  const len = wordleState.target.length;
+  wordleState.maxAttempts = len <= 2 ? 6 : len <= 4 ? 8 : 10;
   wordleState.guesses = [];
   wordleState.currentAttempt = 0;
   wordleState.done = false;
@@ -1546,6 +1550,7 @@ function renderWordleGrid(){
   const len = t.length;
   $('wordle-status').textContent = '📝 拼字挑战 | 已猜 ' + wordleState.currentAttempt + '/' + wordleState.maxAttempts + ' 次';
   $('wordle-attempts').textContent = '已猜 ' + wordleState.currentAttempt + '/' + wordleState.maxAttempts + ' · 剩余 ' + Math.max(0, wordleState.maxAttempts - wordleState.currentAttempt) + ' 次';
+  $('wordle-word-hint').textContent = '📝 共 ' + len + ' 个字，有 ' + wordleState.maxAttempts + ' 次尝试机会';
   let slots = '';
   for (let i = 0; i < len; i++) slots += '<div class="wordle-cell slot">_</div>';
   $('wordle-slots').innerHTML = slots;
@@ -1675,6 +1680,7 @@ function switchMode(m){
   $('hints').classList.toggle('hidden', wordleOn);
   $('wordle-panel').classList.toggle('hidden', !wordleOn);
   $('submit-btn').textContent = wordleOn ? '🔍 猜测' : '🔥 提交';
+  $('wordle-word-hint').classList.toggle('hidden', !wordleOn);   // 拼字：输入框下方显示字数/次数提示
   if (m === 'wordle'){
     updateStats();
     startWordleGame();   // 重置状态 + 随机抽取新目标
@@ -2088,13 +2094,22 @@ window.addEventListener('DOMContentLoaded', () => {
       input.focus();
     }
   });
-  $('guess-input').addEventListener('input', e => {
-    if (mode !== 'wordle') return;
+  // 拼字输入过滤：IME 组合期间不重写 value（避免破坏中文输入法拼音组合），过滤赋值时恢复原光标（尊重编辑位置）
+let wordleComposing = false;
+$('guess-input').addEventListener('compositionstart', () => { wordleComposing = true; });
+$('guess-input').addEventListener('compositionend', () => { wordleComposing = false; });
+$('guess-input').addEventListener('input', e => {
+    if (mode !== 'wordle' || wordleComposing) return;
     // 允许中文与数字（物品名含数字，如 11号唱片）；全角数字先归一为半角，再过滤英文/标点
     const v = e.target.value.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^\u4e00-\u9fff0-9]/g, '');
     const max = wordleState.target ? wordleState.target.length : 0;
     const cut = max > 0 && v.length > max ? v.slice(0, max) : v;
-    if (cut !== e.target.value) e.target.value = cut;
+    if (cut !== e.target.value){
+      const pos = e.target.selectionStart || 0;   // 记录原光标，赋值后恢复（不强制选中）
+      e.target.value = cut;
+      const p = Math.min(pos, cut.length);
+      try { e.target.setSelectionRange(p, p); } catch (_) {}
+    }
   });
   // 动态迷雾擦拭：事件穿透到容器（顶层图 pointer-events:none），多指只跟踪第一个触点
   const stage = $('icon-stage');
