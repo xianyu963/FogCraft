@@ -104,6 +104,6 @@ node server.js
 
 本项目的**代码实现（HTML/CSS/JavaScript）及数据抓取脚本**由 [Qoder](https://qoder.com) AI 编程助手辅助生成。
 
-> **人类贡献**：游戏机制设计、UI/UX 交互原型、数据校验、测试验收及项目部署由xian_yu963完成。
+> **人类贡献**：游戏机制设计、UI/UX 交互原型、数据校验、测试验收及项目部署由xianyu963完成。
 
 所有 Minecraft 相关资产（物品图标、音效名称等）版权归 Mojang Studios 所有，本项目仅供非商业同人学习交流。
