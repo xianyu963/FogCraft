@@ -1011,50 +1011,78 @@ function markDailyDone(){
   return streak;
 }
 
-/* ================= MC 官方音效系统 ================= */
-// Minecraft Wiki 官方音频直链（.ogg），SoundManager 预加载 + 播放；加载失败/音量 0 均静默
+/* ================= 合成音效系统（Web Audio API） ================= */
+// 全部音效由振荡器实时合成，不依赖外部音频文件（自包含、无 CORS/网络依赖）；
+// 猜对/猜错/线索/每日完成/倒计时/硬核/擦拭 7 种 MC 风格声音；首次交互后才可发声（浏览器自动播放策略）
 const LS_VOLUME = 'fogcraft_volume';   // 音量（0~100）
-const SOUNDS = {
-  correct:   'https://minecraft.wiki/images/experience_orb_pickup.ogg',   // 猜对：拾取经验球
-  wrong:     'https://minecraft.wiki/images/entity.player.hurt.ogg',      // 猜错：玩家受伤
-  clue:      'https://minecraft.wiki/images/block.chest.open.ogg',        // 线索解锁：箱子打开
-  dailyDone: 'https://minecraft.wiki/images/entity.player.levelup.ogg',   // 每日完成：玩家升级
-  rushTick:  'https://minecraft.wiki/images/block.note_block.bell.ogg',   // 竞速倒计时：钟声
-  hardcore:  'https://minecraft.wiki/images/block.anvil.use.ogg',         // 硬核切换：铁砧
-  wipe:      'https://minecraft.wiki/images/block.wood.place.ogg',        // 擦拭迷雾：放置木头
-};
 const SoundManager = {
-  _pool: {},     // key -> HTMLAudioElement
-  _ready: {},    // key -> 是否加载成功（canplaythrough / error）
-  _vol: 0.8,     // 全局音量 0~1（默认 80%）
-  // 预加载全部音效：异步加载，失败静默；不阻塞游戏启动（音效稍后生效）
+  _ctx: null,      // AudioContext（首次播放时惰性创建）
+  _vol: 0.8,       // 全局音量 0~1（默认 80%）
+  // 惰性创建并恢复 AudioContext（挂起态 resume，失败静默）
+  _ensure(){
+    if (!this._ctx){
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;   // 环境不支持：静默
+      this._ctx = new AC();
+    }
+    if (this._ctx.state === 'suspended') this._ctx.resume().catch(() => {});
+    return this._ctx;
+  },
+  // 播放单音：振荡器 + 音量包络（10ms 起音防爆音，指数衰减收尾）
+  _tone(freq, dur, type, vol, slideTo){
+    const ctx = this._ensure();
+    if (!ctx) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(slideTo, 1), t0 + dur);
+    const v = this._vol * (vol || 0.5);
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(v, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  },
+  // 预加载：合成方案无外部资源，仅恢复音量设置
   preloadAll(){
     const saved = parseFloat(storage.get(LS_VOLUME));
     if (!isNaN(saved)) this._vol = Math.max(0, Math.min(1, saved / 100));
-    let pending = Object.keys(SOUNDS).length;
-    const done = () => { if (--pending === 0) showToast('✅ 音效已就绪'); };
-    for (const k in SOUNDS){
-      const a = new Audio();
-      a.crossOrigin = 'anonymous';   // 跨域加载（Minecraft Wiki 音频直链）
-      a.preload = 'auto';
-      a.volume = this._vol;
-      a.src = SOUNDS[k];
-      a.addEventListener('canplaythrough', () => { this._ready[k] = true; done(); }, { once: true });
-      a.addEventListener('error', () => { this._ready[k] = false; done(); }, { once: true });
-      this._pool[k] = a;
-    }
   },
-  // 按 key 播放；未加载成功 / 音量 0 / 播放失败均静默忽略
+  // 按 key 播放合成音效；音量 0 / 环境不支持均静默
   play(key){
-    const a = this._pool[key];
-    if (!a || !this._ready[key] || this._vol <= 0) return;
-    a.currentTime = 0;   // 支持快速连续播放
-    const p = a.play();
-    if (p && p.catch) p.catch(() => {});   // 自动播放限制等错误静默
+    if (this._vol <= 0) return;
+    switch (key){
+      case 'correct':    // 猜对：拾取经验球——双连清脆上行
+        this._tone(1318, 0.07, 'sine', 0.35);
+        setTimeout(() => this._tone(1760, 0.12, 'sine', 0.35), 60);
+        break;
+      case 'wrong':      // 猜错：玩家受伤——低沉下滑
+        this._tone(220, 0.22, 'sawtooth', 0.3, 90);
+        break;
+      case 'clue':       // 线索解锁：箱子打开——木质双响
+        this._tone(330, 0.08, 'triangle', 0.4);
+        setTimeout(() => this._tone(494, 0.1, 'triangle', 0.35), 70);
+        break;
+      case 'dailyDone':  // 每日完成：玩家升级——上行琶音 C5-E5-G5-C6
+        [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this._tone(f, 0.16, 'triangle', 0.4), i * 90));
+        break;
+      case 'rushTick':   // 竞速倒计时：钟声
+        this._tone(988, 0.28, 'sine', 0.3);
+        break;
+      case 'hardcore':   // 硬核切换：铁砧金属重击
+        this._tone(150, 0.18, 'square', 0.35, 80);
+        setTimeout(() => this._tone(120, 0.12, 'square', 0.25, 60), 60);
+        break;
+      case 'wipe':       // 擦拭迷雾：放置木头——短促闷响
+        this._tone(120, 0.06, 'square', 0.3, 80);
+        break;
+    }
   },
   setVolume(v){   // 0~1；0 即静音（play 直接返回不播放）
     this._vol = Math.max(0, Math.min(1, v));
-    for (const k in this._pool) this._pool[k].volume = this._vol;
     storage.set(LS_VOLUME, String(Math.round(this._vol * 100)));
   },
   get volume(){ return this._vol; },
@@ -1203,8 +1231,8 @@ function resetFog(keepEnabled){
   fogDirty = false;
   if (!keepEnabled) fogEnabled = false;   // 等待图片加载完成后重新启用
   const fog = $('fog-layer');
+  fog.style.visibility = '';              // 恢复迷雾层可见（每日完成 showDailyDone 可能设置过 hidden，必须清理，否则迷雾永不恢复）
   if (MASK_OK){ fog.style.maskImage = ''; fog.style.webkitMaskImage = ''; }
-  else fog.style.visibility = '';         // 降级：恢复模糊层可见
   $('wipe-ring').classList.add('hidden');
 }
 // 更新擦拭区域：以 (x,y) 为圆心挖出透明圆，露出底层清晰图（mask 性能优于 Canvas）
@@ -1224,6 +1252,7 @@ function setFogMask(x, y){
 function wipeRevealAll(){
   fogDirty = false;
   const fog = $('fog-layer');
+  fog.style.visibility = '';              // 确保迷雾层可见（清除可能残留的 hidden），mask 揭示才能生效
   if (MASK_OK){
     const m = 'radial-gradient(circle 9999px at 50% 50%, transparent 0%, black 100%)';
     fog.style.maskImage = m;
@@ -2103,9 +2132,7 @@ window.addEventListener('DOMContentLoaded', () => {
   });
   $('settings-hardcore').addEventListener('change', e => setHardcoreDefault(e.target.checked));
   $('vol-box').classList.add('hidden');   // 主界面隐藏游戏内音量齿轮（设置弹窗负责音量）
-  // 预加载官方音效（异步，不阻塞游戏启动，音效稍后生效）
-  showToast('🔊 音效加载中…');
-  SoundManager.preloadAll();
+  SoundManager.preloadAll();   // 合成音效无外部资源，仅恢复音量设置
   // 音量控制（右下角齿轮展开滑块）
   $('vol-gear').addEventListener('click', () => $('vol-panel').classList.toggle('hidden'));
   $('vol-slider').value = String(Math.round(SoundManager.volume * 100));
